@@ -21,6 +21,65 @@ describe("llmClient", () => {
     vi.restoreAllMocks();
   });
 
+  test.each(["report", "connection test"])(
+    "uses the v1 fallback after a JSON 404 for %s",
+    async (mode) => {
+      vi.mocked(isTauriRuntime).mockReturnValue(true);
+      const urls: string[] = [];
+      vi.mocked(invoke).mockImplementation(async (command, args) => {
+        if (command !== "ai_http_request") return undefined;
+        const url = (args as { url: string }).url;
+        urls.push(url);
+        return {
+          status: url.includes("/v1/") ? 200 : 404,
+          content_type: "application/json",
+          body: JSON.stringify(
+            url.includes("/v1/")
+              ? { choices: [{ message: { content: "OK" } }] }
+              : { error: { message: "route not found" } },
+          ),
+        };
+      });
+      const options = {
+        endpoint: "https://example.com",
+        model: "test",
+        messages: [{ role: "user" as const, content: "test" }],
+      };
+      if (mode === "report")
+        expect(await requestChatCompletion(options)).toBe("OK");
+      else
+        expect(await testChatCompletion(options)).toMatchObject({
+          ok: true,
+          content: "OK",
+        });
+      expect(urls).toEqual([
+        "https://example.com/chat/completions",
+        "https://example.com/v1/chat/completions",
+      ]);
+    },
+  );
+
+  test("does not probe another chat path after an authentication failure", async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    const urls: string[] = [];
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command !== "ai_http_request") return undefined;
+      urls.push((args as { url: string }).url);
+      return {
+        status: 401,
+        content_type: "application/json",
+        body: '{"error":"invalid key"}',
+      };
+    });
+    expect(
+      await testChatCompletion({
+        endpoint: "https://example.com",
+        model: "test",
+      }),
+    ).toMatchObject({ ok: false, status: 401 });
+    expect(urls).toHaveLength(1);
+  });
+
   test("uses native HTTP for model discovery and chat in the desktop app", async () => {
     vi.mocked(isTauriRuntime).mockReturnValue(true);
     let httpCalls = 0;

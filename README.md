@@ -13,7 +13,7 @@
 当前提供 macOS Apple Silicon 安装包：
 
 ```text
-yibu_0.1.4_aarch64.dmg
+yibu_0.1.5_aarch64.dmg
 ```
 
 ## 核心功能
@@ -67,7 +67,7 @@ npm run tauri:build
 
 ```text
 /tmp/yibu-tauri-target/release/bundle/macos/一步.app
-/tmp/yibu-tauri-target/release/bundle/dmg/一步_0.1.4_aarch64.dmg
+/tmp/yibu-tauri-target/release/bundle/dmg/一步_0.1.5_aarch64.dmg
 ```
 
 ## 常用命令

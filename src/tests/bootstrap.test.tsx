@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { App } from "../app/App";
+import { AppErrorBoundary } from "../components/common/AppErrorBoundary";
 import { demoSnapshot } from "../lib/demo/demoSnapshot";
 import { seedAppData } from "../lib/demo/seedAppData";
 import { resetDatabase } from "../lib/storage/db";
@@ -31,6 +32,23 @@ describe("App shell", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test("shows recovery when loading persisted workspace data fails", async () => {
+    await Promise.all([
+      useProjectStore.getState().loadProjects(),
+      useTaskStore.getState().loadTasks(),
+      useFocusStore.getState().loadFocus(),
+      useReportStore.getState().loadReports(),
+      usePreferenceStore.getState().loadPreferences(),
+    ]);
+    useTaskStore.setState({ isLoaded: false });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(taskRepository, "listAll").mockRejectedValue(new Error("database unavailable"));
+    renderWithRouter(<AppErrorBoundary><App /></AppErrorBoundary>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("页面暂时无法显示");
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeInTheDocument();
   });
 
   test("renders primary navigation for Home, Projects, and Reports", async () => {

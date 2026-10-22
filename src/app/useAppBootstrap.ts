@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFocusStore } from "../features/focus/focusStore";
 import { usePreferenceStore } from "../features/preferences/preferenceStore";
 import { useProjectStore } from "../features/projects/projectStore";
@@ -18,8 +18,11 @@ export function useAppBootstrap() {
   const isPreferencesLoaded = usePreferenceStore((state) => state.isLoaded);
   const loadPreferences = usePreferenceStore((state) => state.loadPreferences);
   const bootstrapStartedRef = useRef(false);
+  const [loadError, setLoadError] = useState<Error | null>(null);
 
   useEffect(() => {
+    const failed = () =>
+      setLoadError(new Error("工作区数据加载失败，请重新加载。"));
     if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
       if (bootstrapStartedRef.current) {
         return;
@@ -36,24 +39,24 @@ export function useAppBootstrap() {
           loadReports(),
           loadPreferences(),
         ]);
-      })();
+      })().catch(failed);
       return;
     }
 
     if (!isProjectsLoaded) {
-      void loadProjects();
+      void loadProjects().catch(failed);
     }
     if (!isTasksLoaded) {
-      void loadTasks();
+      void loadTasks().catch(failed);
     }
     if (!isFocusLoaded) {
-      void loadFocus();
+      void loadFocus().catch(failed);
     }
     if (!isReportsLoaded) {
-      void loadReports();
+      void loadReports().catch(failed);
     }
     if (!isPreferencesLoaded) {
-      void loadPreferences();
+      void loadPreferences().catch(failed);
     }
   }, [
     isFocusLoaded,
@@ -67,6 +70,8 @@ export function useAppBootstrap() {
     loadReports,
     loadTasks,
   ]);
+
+  if (loadError) throw loadError;
 
   return {
     ready:

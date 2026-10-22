@@ -24,7 +24,10 @@ type JsonRow = {
 let databasePromise: Promise<Database> | null = null;
 
 function getSqliteDatabase() {
-  databasePromise ??= Database.load(SQLITE_URL);
+  databasePromise ??= Database.load(SQLITE_URL).catch((error: unknown) => {
+    databasePromise = null;
+    throw error;
+  });
   return databasePromise;
 }
 

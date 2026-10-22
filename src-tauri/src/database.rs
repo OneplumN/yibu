@@ -320,6 +320,122 @@ mod tests {
         serde_json::from_str(&raw).unwrap()
     }
 
+    async fn file_database() -> (SqlitePool, std::path::PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("yibu-review-{}-{stamp}.db", std::process::id()));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await
+            .unwrap();
+        for migration in crate::sqlite_migrations() {
+            sqlx::raw_sql(migration.sql).execute(&pool).await.unwrap();
+        }
+        (pool, path)
+    }
+
+    #[test]
+    fn late_snapshot_failure_preserves_all_tables_on_disk() {
+        tauri::async_runtime::block_on(async {
+            let (pool, path) = file_database().await;
+            let original = Snapshot {
+                projects: vec![project("original")],
+                tasks: vec![json!({"id":"t","projectId":"p","status":"todo","updatedAt":"now"})],
+                focus_refs: vec![json!({"taskId":"t","addedAt":"now"})],
+                reports: vec![json!({"id":"r","type":"daily","createdAt":"now"})],
+                preferences: json!({"id":"preferences","updatedAt":"now","theme":"dark"}),
+            };
+            atomic_write(&pool, Write::Snapshot { snapshot: original })
+                .await
+                .unwrap();
+            let mut before = Vec::new();
+            for table in ["projects", "tasks", "focus_refs", "reports", "preferences"] {
+                let rows: Vec<String> =
+                    sqlx::query_scalar(&format!("SELECT payload_json FROM {table}"))
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap();
+                before.push((table, rows));
+            }
+            // Fail at the last table, after every original table has been deleted.
+            let bad = Snapshot {
+                projects: vec![project("replacement")],
+                tasks: vec![],
+                focus_refs: vec![],
+                reports: vec![],
+                preferences: json!({"id":"preferences"}),
+            };
+            assert!(atomic_write(&pool, Write::Snapshot { snapshot: bad })
+                .await
+                .is_err());
+            pool.close().await;
+            let reopened =
+                SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+                    .await
+                    .unwrap();
+            for (table, expected) in before {
+                let actual: Vec<String> =
+                    sqlx::query_scalar(&format!("SELECT payload_json FROM {table}"))
+                        .fetch_all(&reopened)
+                        .await
+                        .unwrap();
+                assert_eq!(actual, expected, "{table} changed after failed import");
+            }
+            reopened.close().await;
+            std::fs::remove_file(path).unwrap();
+        });
+    }
+
+    #[test]
+    fn concurrent_connections_reject_a_stale_project_write() {
+        tauri::async_runtime::block_on(async {
+            let (pool, path) = file_database().await;
+            atomic_write(&pool, snapshot(vec![project("original")]))
+                .await
+                .unwrap();
+            let (first, second) = tokio::join!(
+                atomic_write(
+                    &pool,
+                    Write::Projects {
+                        projects: vec![project("first")],
+                        expected: vec![project("original")]
+                    }
+                ),
+                atomic_write(
+                    &pool,
+                    Write::Projects {
+                        projects: vec![project("second")],
+                        expected: vec![project("original")]
+                    }
+                ),
+            );
+            assert_ne!(first.unwrap(), second.unwrap());
+            let saved = saved_project(&pool).await;
+            assert!(saved["name"] == "first" || saved["name"] == "second");
+            assert!(atomic_write(
+                &pool,
+                Write::Projects {
+                    projects: vec![project("retried")],
+                    expected: vec![saved],
+                }
+            )
+            .await
+            .unwrap());
+            assert_eq!(saved_project(&pool).await["name"], "retried");
+            pool.close().await;
+            std::fs::remove_file(path).unwrap();
+        });
+    }
+
     #[test]
     fn failed_import_rolls_back_every_table() {
         tauri::async_runtime::block_on(async {

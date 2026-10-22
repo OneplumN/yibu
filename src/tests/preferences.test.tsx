@@ -57,6 +57,27 @@ describe("preferences store", () => {
     expect(saved.aiRole).toBe("请输出日报");
   });
 
+  test("preserves separate settings saved concurrently", async () => {
+    await usePreferenceStore.getState().loadPreferences();
+    await Promise.all([
+      usePreferenceStore.getState().savePreferences({ theme: "dark" }),
+      usePreferenceStore.getState().savePreferences({ aiRole: "report role" }),
+    ]);
+    expect(await preferenceRepository.load()).toMatchObject({
+      theme: "dark",
+      aiRole: "report role",
+    });
+    expect(usePreferenceStore.getState().preferences.theme).toBe("dark");
+  });
+
+  test("continues saving settings after a failed write", async () => {
+    await usePreferenceStore.getState().loadPreferences();
+    vi.spyOn(preferenceRepository, "save").mockRejectedValueOnce(new Error("write failed"));
+    await expect(usePreferenceStore.getState().savePreferences({ theme: "dark" })).rejects.toThrow("write failed");
+    await usePreferenceStore.getState().savePreferences({ aiRole: "saved later" });
+    expect(await preferenceRepository.load()).toMatchObject({ theme: "light", aiRole: "saved later" });
+  });
+
   test("opens settings as a page and supports close interactions", async () => {
     const user = userEvent.setup();
     renderWithRouter(<App />);

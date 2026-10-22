@@ -447,41 +447,70 @@ export function parseChatCompletionContent(payload: unknown) {
   return typeof text === "string" ? text.trim() : "";
 }
 
-export async function requestChatCompletion(options: ChatCompletionOptions) {
+class ChatCompletionError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function requestChatCompletionResult(options: ChatCompletionOptions) {
   const chatEndpoints = getCandidateChatCompletionsEndpoints(options.endpoint);
   let lastError: Error | null = null;
 
   for (const chatEndpoint of chatEndpoints) {
     if (options.signal?.aborted) throw new Error("请求已取消。");
+    let retryPath = false;
     try {
       const response = await fetchChatCompletion(options, chatEndpoint);
-      const payload = await readJsonPayload(response);
+      retryPath = response.status === 404 || response.status === 405;
+      let payload: unknown;
+      try {
+        payload = await readJsonPayload(response);
+      } catch (error) {
+        // A successful HTML page can be a provider's website rather than its API.
+        retryPath ||= response.ok;
+        throw new ChatCompletionError(
+          getNetworkErrorMessage(error),
+          response.status,
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(
+        throw new ChatCompletionError(
           `AI request failed (${response.status}): ${getResponseErrorMessage(payload, response)}`,
+          response.status,
         );
       }
 
       const content = parseChatCompletionContent(payload);
 
       if (!content) {
-        throw new Error("AI response did not include content");
+        throw new ChatCompletionError(
+          "AI 服务未返回有效的回复内容。",
+          response.status,
+        );
       }
 
-      return content;
+      return { content, status: response.status };
     } catch (error) {
       lastError =
         error instanceof Error
           ? error
           : new Error(getNetworkErrorMessage(error));
-      if (!lastError.message.includes("AI 服务返回的不是 JSON")) {
+      if (!retryPath || options.signal?.aborted) {
         break;
       }
     }
   }
 
   throw lastError ?? new Error("AI endpoint is required.");
+}
+
+export async function requestChatCompletion(options: ChatCompletionOptions) {
+  return (await requestChatCompletionResult(options)).content;
 }
 
 export async function testChatCompletion(options: {
@@ -494,7 +523,7 @@ export async function testChatCompletion(options: {
   const startedAt = performance.now();
 
   try {
-    const response = await fetchChatCompletion({
+    const result = await requestChatCompletionResult({
       apiKey: options.apiKey,
       endpoint: options.endpoint,
       extraBodyJson: options.extraBodyJson,
@@ -503,40 +532,17 @@ export async function testChatCompletion(options: {
       temperature: 0,
       signal: options.signal,
     });
-    const elapsedMs = Math.round(performance.now() - startedAt);
-    const payload = await readJsonPayload(response);
-    const content = parseChatCompletionContent(payload);
-
-    if (!response.ok) {
-      return {
-        elapsedMs,
-        error: getResponseErrorMessage(payload, response),
-        ok: false,
-        status: response.status,
-      };
-    }
-
-    if (!content) {
-      return {
-        elapsedMs,
-        error: "AI 服务未返回有效的回复内容。",
-        ok: false,
-        status: response.status,
-      };
-    }
-
     return {
-      content: content || JSON.stringify(payload, null, 2),
-      elapsedMs,
+      ...result,
+      elapsedMs: Math.round(performance.now() - startedAt),
       ok: true,
-      status: response.status,
     };
   } catch (error) {
     return {
       elapsedMs: Math.round(performance.now() - startedAt),
       error: getNetworkErrorMessage(error),
       ok: false,
-      status: 0,
+      status: error instanceof ChatCompletionError ? error.status : 0,
     };
   }
 }
