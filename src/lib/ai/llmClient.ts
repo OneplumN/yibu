@@ -1,3 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntime } from "../platform/runtime";
+import { recordDesktopError } from "../desktop/errorLog";
+
 export type ChatMessage = {
   content: string;
   role: "system" | "user";
@@ -19,6 +23,7 @@ export type ChatCompletionRequest = {
 export type ChatCompletionOptions = ChatCompletionRequestInput & {
   apiKey?: string;
   endpoint: string;
+  signal?: AbortSignal;
 };
 
 export type ApiTestResult =
@@ -85,7 +90,9 @@ function collectModelIds(payload: unknown) {
     addModelId(model);
   }
 
-  if (payload && typeof payload === "object") {
+  if (Array.isArray(payload)) {
+    visit(payload);
+  } else if (payload && typeof payload === "object") {
     const data = "data" in payload ? payload.data : undefined;
     const models = "models" in payload ? payload.models : undefined;
     visit(data);
@@ -98,6 +105,9 @@ function collectModelIds(payload: unknown) {
 }
 
 function getNetworkErrorMessage(error: unknown) {
+  if (typeof error === "string") {
+    return error;
+  }
   if (!(error instanceof TypeError) || error.message !== "Failed to fetch") {
     return error instanceof Error ? error.message : "Unknown network error";
   }
@@ -133,7 +143,8 @@ export function getCandidateChatCompletionsEndpoints(endpoint: string) {
       ];
 
   return candidates.filter(
-    (candidate, index, allCandidates) => allCandidates.indexOf(candidate) === index,
+    (candidate, index, allCandidates) =>
+      allCandidates.indexOf(candidate) === index,
   );
 }
 
@@ -151,7 +162,10 @@ export function normalizeModelsEndpoint(endpoint: string) {
   return `${trimmedEndpoint}/models`;
 }
 
-export function getCandidateModelsEndpoints(endpoint: string, modelsEndpoint?: string) {
+export function getCandidateModelsEndpoints(
+  endpoint: string,
+  modelsEndpoint?: string,
+) {
   const trimmedModelsEndpoint = modelsEndpoint?.trim().replace(/\/+$/, "");
   if (trimmedModelsEndpoint) {
     return [trimmedModelsEndpoint];
@@ -170,7 +184,8 @@ export function getCandidateModelsEndpoints(endpoint: string, modelsEndpoint?: s
       ];
 
   return candidates.filter(
-    (candidate, index, allCandidates) => allCandidates.indexOf(candidate) === index,
+    (candidate, index, allCandidates) =>
+      allCandidates.indexOf(candidate) === index,
   );
 }
 
@@ -226,7 +241,10 @@ function buildProxyPayload(options: ChatCompletionOptions) {
   };
 }
 
-async function fetchJsonThroughProxy(path: "/api/ai/chat-completions" | "/api/ai/models", payload: unknown) {
+async function fetchJsonThroughProxy(
+  path: "/api/ai/chat-completions" | "/api/ai/models",
+  payload: unknown,
+) {
   return fetch(path, {
     body: JSON.stringify(payload),
     headers: {
@@ -236,7 +254,18 @@ async function fetchJsonThroughProxy(path: "/api/ai/chat-completions" | "/api/ai
   });
 }
 
-async function fetchChatCompletion(options: ChatCompletionOptions, chatEndpoint?: string) {
+async function fetchChatCompletion(
+  options: ChatCompletionOptions,
+  chatEndpoint?: string,
+) {
+  if (isTauriRuntime()) {
+    return fetchDesktopAi(
+      chatEndpoint ?? normalizeChatCompletionsEndpoint(options.endpoint),
+      options.apiKey,
+      buildChatCompletionRequest(options),
+      options.signal,
+    );
+  }
   if (import.meta.env.DEV) {
     return fetchJsonThroughProxy("/api/ai/chat-completions", {
       ...buildProxyPayload(options),
@@ -244,18 +273,26 @@ async function fetchChatCompletion(options: ChatCompletionOptions, chatEndpoint?
     });
   }
 
-  return fetch(chatEndpoint ?? normalizeChatCompletionsEndpoint(options.endpoint), {
-    body: JSON.stringify(buildChatCompletionRequest(options)),
-    headers: {
-      ...(options.apiKey?.trim() ? { Authorization: `Bearer ${options.apiKey.trim()}` } : {}),
-      "Content-Type": "application/json",
+  return fetch(
+    chatEndpoint ?? normalizeChatCompletionsEndpoint(options.endpoint),
+    {
+      body: JSON.stringify(buildChatCompletionRequest(options)),
+      headers: {
+        ...(options.apiKey?.trim()
+          ? { Authorization: `Bearer ${options.apiKey.trim()}` }
+          : {}),
+        "Content-Type": "application/json",
+      },
+      method: "POST",
     },
-    method: "POST",
-  });
+  );
 }
 
 async function readJsonPayload(response: Response) {
-  if (typeof response.text !== "function" && typeof response.json === "function") {
+  if (
+    typeof response.text !== "function" &&
+    typeof response.json === "function"
+  ) {
     return (await response.json()) as unknown;
   }
 
@@ -267,7 +304,8 @@ async function readJsonPayload(response: Response) {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    const contentType = response.headers.get("Content-Type") || "unknown content-type";
+    const contentType =
+      response.headers.get("Content-Type") || "unknown content-type";
     const preview = text.replace(/\s+/g, " ").trim().slice(0, 160);
     throw new Error(
       `AI 服务返回的不是 JSON（${response.status} ${contentType}）。请检查服务地址是否指向 OpenAI 兼容接口；返回内容预览：${preview}`,
@@ -292,7 +330,20 @@ function getResponseErrorMessage(payload: unknown, response: Response) {
   return JSON.stringify(payload ?? { error: response.statusText }, null, 2);
 }
 
-async function fetchModels(options: { apiKey?: string; endpoint: string; url: string }) {
+async function fetchModels(options: {
+  apiKey?: string;
+  endpoint: string;
+  url: string;
+  signal?: AbortSignal;
+}) {
+  if (isTauriRuntime()) {
+    return fetchDesktopAi(
+      options.url,
+      options.apiKey,
+      undefined,
+      options.signal,
+    );
+  }
   if (import.meta.env.DEV) {
     return fetchJsonThroughProxy("/api/ai/models", {
       apiKey: options.apiKey,
@@ -303,10 +354,52 @@ async function fetchModels(options: { apiKey?: string; endpoint: string; url: st
 
   return fetch(options.url, {
     headers: {
-      ...(options.apiKey?.trim() ? { Authorization: `Bearer ${options.apiKey.trim()}` } : {}),
+      ...(options.apiKey?.trim()
+        ? { Authorization: `Bearer ${options.apiKey.trim()}` }
+        : {}),
     },
     method: "GET",
   });
+}
+
+async function fetchDesktopAi(
+  url: string,
+  apiKey?: string,
+  body?: ChatCompletionRequest,
+  signal?: AbortSignal,
+) {
+  const requestId = crypto.randomUUID();
+  await invoke("ai_prepare_request", { requestId });
+  const cancel = () => {
+    void invoke("ai_cancel_request", { requestId }).catch(() => {});
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal?.aborted) throw new Error("请求已取消。");
+    const result = await invoke<{
+      status: number;
+      body: string;
+      content_type: string;
+    }>("ai_http_request", {
+      requestId,
+      url,
+      apiKey,
+      body: body ?? null,
+    });
+    return new Response(
+      [204, 205, 304].includes(result.status) ? null : result.body,
+      {
+        status: result.status,
+        headers: { "Content-Type": result.content_type },
+      },
+    );
+  } catch (error) {
+    if (!signal?.aborted) recordDesktopError("ai_request_failed");
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await invoke("ai_cancel_request", { requestId }).catch(() => {});
+  }
 }
 
 export function parseChatCompletionContent(payload: unknown) {
@@ -359,12 +452,15 @@ export async function requestChatCompletion(options: ChatCompletionOptions) {
   let lastError: Error | null = null;
 
   for (const chatEndpoint of chatEndpoints) {
+    if (options.signal?.aborted) throw new Error("请求已取消。");
     try {
       const response = await fetchChatCompletion(options, chatEndpoint);
       const payload = await readJsonPayload(response);
 
       if (!response.ok) {
-        throw new Error(`AI request failed (${response.status}): ${getResponseErrorMessage(payload, response)}`);
+        throw new Error(
+          `AI request failed (${response.status}): ${getResponseErrorMessage(payload, response)}`,
+        );
       }
 
       const content = parseChatCompletionContent(payload);
@@ -375,7 +471,10 @@ export async function requestChatCompletion(options: ChatCompletionOptions) {
 
       return content;
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error("AI request failed.");
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(getNetworkErrorMessage(error));
       if (!lastError.message.includes("AI 服务返回的不是 JSON")) {
         break;
       }
@@ -390,6 +489,7 @@ export async function testChatCompletion(options: {
   endpoint: string;
   extraBodyJson?: string;
   model: string;
+  signal?: AbortSignal;
 }): Promise<ApiTestResult> {
   const startedAt = performance.now();
 
@@ -401,20 +501,25 @@ export async function testChatCompletion(options: {
       messages: [{ content: "请只回复 OK", role: "user" }],
       model: options.model,
       temperature: 0,
+      signal: options.signal,
     });
     const elapsedMs = Math.round(performance.now() - startedAt);
-    const payload = await readJsonPayload(response).catch((error) => {
-      if (error instanceof Error) {
-        return { error: error.message };
-      }
-      return null;
-    });
+    const payload = await readJsonPayload(response);
     const content = parseChatCompletionContent(payload);
 
     if (!response.ok) {
       return {
         elapsedMs,
         error: getResponseErrorMessage(payload, response),
+        ok: false,
+        status: response.status,
+      };
+    }
+
+    if (!content) {
+      return {
+        elapsedMs,
+        error: "AI 服务未返回有效的回复内容。",
         ok: false,
         status: response.status,
       };
@@ -440,8 +545,12 @@ export async function fetchAvailableModels(options: {
   apiKey?: string;
   endpoint: string;
   modelsEndpoint?: string;
+  signal?: AbortSignal;
 }): Promise<ModelListResult> {
-  const urls = getCandidateModelsEndpoints(options.endpoint, options.modelsEndpoint);
+  const urls = getCandidateModelsEndpoints(
+    options.endpoint,
+    options.modelsEndpoint,
+  );
   if (urls.length === 0) {
     return {
       error: "请先填写服务地址或模型列表地址。",
@@ -453,49 +562,49 @@ export async function fetchAvailableModels(options: {
   let lastError: ModelListResult | null = null;
 
   for (const url of urls) {
-  try {
-    const response = await fetchModels({
-      apiKey: options.apiKey,
-      endpoint: options.endpoint,
-      url,
-    });
-    const payload = await readJsonPayload(response).catch((error) => {
-      if (error instanceof Error) {
-        return { error: error.message };
-      }
-      return null;
-    });
+    if (options.signal?.aborted)
+      return { ok: false, status: 0, error: "请求已取消。", url };
+    try {
+      const response = await fetchModels({
+        apiKey: options.apiKey,
+        endpoint: options.endpoint,
+        url,
+        signal: options.signal,
+      });
+      const payload = await readJsonPayload(response);
 
-    if (!response.ok) {
-      lastError = {
-        error: getResponseErrorMessage(payload, response),
-        ok: false,
+      if (!response.ok) {
+        lastError = {
+          error: getResponseErrorMessage(payload, response),
+          ok: false,
+          status: response.status,
+          url,
+        };
+        continue;
+      }
+
+      const models = collectModelIds(payload);
+      return {
+        models,
+        ok: true,
         status: response.status,
         url,
       };
-      continue;
+    } catch (error) {
+      lastError = {
+        error: getNetworkErrorMessage(error),
+        ok: false,
+        status: 0,
+        url,
+      };
     }
+  }
 
-    const models = collectModelIds(payload);
-    return {
-      models,
-      ok: true,
-      status: response.status,
-      url,
-    };
-  } catch (error) {
-    lastError = {
-      error: getNetworkErrorMessage(error),
+  return (
+    lastError ?? {
+      error: "没有可用的模型列表地址。",
       ok: false,
       status: 0,
-      url,
-    };
-  }
-  }
-
-  return lastError ?? {
-    error: "没有可用的模型列表地址。",
-    ok: false,
-    status: 0,
-  };
+    }
+  );
 }

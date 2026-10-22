@@ -2,6 +2,9 @@ import { getStorageAdapter } from "./getStorageAdapter";
 import type { Project } from "../../types/project";
 
 export const projectRepository = {
+  async saveIfUnchanged(projects: Project[], expected: Project[]) {
+    return getStorageAdapter().projects.saveIfUnchanged(projects, expected);
+  },
   async delete(projectId: string) {
     await getStorageAdapter().projects.delete(projectId);
   },

@@ -8,12 +8,12 @@
 
 最新版本可以在 GitHub Releases 下载：
 
-[yibu v0.1.2](https://github.com/OneplumN/yibu/releases/tag/v0.1.2)
+[下载最新版本](https://github.com/OneplumN/yibu/releases/latest)
 
 当前提供 macOS Apple Silicon 安装包：
 
 ```text
-yibu_0.1.2_aarch64.dmg
+yibu_0.1.4_aarch64.dmg
 ```
 
 ## 核心功能
@@ -67,7 +67,7 @@ npm run tauri:build
 
 ```text
 /tmp/yibu-tauri-target/release/bundle/macos/一步.app
-/tmp/yibu-tauri-target/release/bundle/dmg/一步_0.1.2_aarch64.dmg
+/tmp/yibu-tauri-target/release/bundle/dmg/一步_0.1.4_aarch64.dmg
 ```
 
 ## 常用命令
@@ -88,6 +88,7 @@ npm run tauri:build  # 构建 Tauri 桌面包
 - Web 开发态使用浏览器 IndexedDB。
 - 正式桌面包首次启动为空数据，不内置 demo 项目。
 - 设置页提供完整数据快照的导入和导出。
+- 导出默认不包含 AI API 密钥，跨设备迁移后需要重新配置。
 
 以下内容属于本地数据或构建产物，已经加入 `.gitignore`：
 
@@ -124,16 +125,11 @@ src-tauri/
 
 ## 发布
 
-当前 release 是手动发布：
+GitHub Actions 自动执行检查和发布：
 
-1. 确认 `main` 通过 `npm run check`、`npm test`、`npm run build`。
-2. 运行 `npm run tauri:build` 生成 DMG。
-3. 使用 GitHub Release 发布版本 tag，例如 `v0.1.0`。
-
-后续可以加入 GitHub Actions：
-
-- CI：每次 push / PR 自动跑类型检查、测试和构建。
-- Release：打 `v*` tag 后自动构建 Tauri 包并上传到 GitHub Release。
+- CI：每次 push / PR 自动跑类型检查、前端测试与构建，以及 macOS 原生数据库测试。
+- Release：同步前端与 Tauri 版本号，推送 `v*` tag 后自动检查、测试、构建 DMG，再上传到 GitHub Release。
+- 本地仍可运行 `npm run tauri:build` 生成安装包。
 
 ## 开发约定
 

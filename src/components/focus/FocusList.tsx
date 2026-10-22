@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   TASK_PRIORITY_LABELS,
   TASK_PRIORITY_ORDER,
@@ -122,15 +122,40 @@ function FocusPriorityControl({
   taskId: string;
 }) {
   const [open, setOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (event.target instanceof Node && !controlRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+        controlRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [open]);
 
   return (
     <div
       className="focus-priority"
+      ref={controlRef}
       data-focus-control="true"
       data-no-drag="true"
     >
       <button
         aria-expanded={open}
+        aria-haspopup="menu"
         aria-label={`修改优先级：${TASK_PRIORITY_LABELS[priority]}`}
         className={`priority-pill priority-pill--${priority} focus-priority__trigger`}
         title="修改优先级"
@@ -144,6 +169,8 @@ function FocusPriorityControl({
         <div className="focus-priority__menu" role="menu">
           {TASK_PRIORITY_ORDER.map((nextPriority) => (
             <button
+              role="menuitemradio"
+              aria-checked={nextPriority === priority}
               className={
                 nextPriority === priority
                   ? `focus-priority__option focus-priority__option--${nextPriority} focus-priority__option--active`

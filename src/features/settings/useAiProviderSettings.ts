@@ -1,4 +1,10 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { AI_PROVIDER_PRESETS } from "../../lib/constants";
 import {
   fetchAvailableModels,
@@ -6,7 +12,11 @@ import {
   type ApiTestResult,
   type ModelListResult,
 } from "../../lib/ai/llmClient";
-import type { AiProfile, AiProviderPreset, Preferences } from "../../types/preferences";
+import type {
+  AiProfile,
+  AiProviderPreset,
+  Preferences,
+} from "../../types/preferences";
 import type {
   ConfirmingDelete,
   PendingAiProfile,
@@ -56,29 +66,56 @@ export function useAiProviderSettings({
   showToast,
 }: UseAiProviderSettingsOptions) {
   const [isAiKeyVisible, setIsAiKeyVisible] = useState(false);
-  const [apiTestResult, setApiTestResult] = useState<ApiTestResult | null>(null);
-  const [modelListResult, setModelListResult] = useState<ModelListResult | null>(null);
+  const [apiTestResult, setApiTestResult] = useState<ApiTestResult | null>(
+    null,
+  );
+  const [modelListResult, setModelListResult] =
+    useState<ModelListResult | null>(null);
   const [draftModelName, setDraftModelName] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isTestingApi, setIsTestingApi] = useState(false);
-  const [pendingAiProfile, setPendingAiProfile] = useState<PendingAiProfile | null>(null);
+  const [pendingAiProfile, setPendingAiProfile] =
+    useState<PendingAiProfile | null>(null);
+  const requestGeneration = useRef(0);
+  const controllers = useRef(new Set<AbortController>());
+
+  useEffect(
+    () => () => {
+      requestGeneration.current += 1;
+      controllers.current.forEach((controller) => controller.abort());
+      controllers.current.clear();
+    },
+    [],
+  );
+
+  function invalidateRequests() {
+    controllers.current.forEach((controller) => controller.abort());
+    controllers.current.clear();
+    requestGeneration.current += 1;
+    setIsFetchingModels(false);
+    setIsTestingApi(false);
+    setApiTestResult(null);
+    setModelListResult(null);
+  }
 
   const activeAiProfile =
-    draft.aiProfiles.find((profile) => profile.id === draft.activeAiProfileId) ??
+    draft.aiProfiles.find(
+      (profile) => profile.id === draft.activeAiProfileId,
+    ) ??
     draft.aiProfiles[0] ??
     getFallbackAiProfile();
-  const fetchedAiModels =
-    modelListResult?.ok
-      ? modelListResult.models.filter(
-          (model) => !activeAiProfile.models.includes(model),
-        )
-      : [];
+  const fetchedAiModels = modelListResult?.ok
+    ? modelListResult.models.filter(
+        (model) => !activeAiProfile.models.includes(model),
+      )
+    : [];
 
   function handleSelectAiProfile(profileId: string) {
     if (pendingAiProfile && profileId !== pendingAiProfile.id) {
       return;
     }
 
+    invalidateRequests();
     setDraft((current) => {
       const profile =
         current.aiProfiles.find((candidate) => candidate.id === profileId) ??
@@ -97,11 +134,14 @@ export function useAiProviderSettings({
     setConfirmingDelete(null);
   }
 
-  function handleSelectBuiltinAiProvider(preset: Exclude<AiProviderPreset, "custom">) {
+  function handleSelectBuiltinAiProvider(
+    preset: Exclude<AiProviderPreset, "custom">,
+  ) {
     if (pendingAiProfile) {
       return;
     }
 
+    invalidateRequests();
     const presetConfig = AI_PROVIDER_PRESETS[preset];
     setDraft((current) => {
       const existingProfile = current.aiProfiles.find(
@@ -143,12 +183,16 @@ export function useAiProviderSettings({
   }
 
   function handleUpdateActiveAiProfile(update: Partial<AiProfile>) {
+    invalidateRequests();
     setDraft((current) => {
       const profiles = current.aiProfiles.map((profile) =>
-        profile.id === current.activeAiProfileId ? { ...profile, ...update } : profile,
+        profile.id === current.activeAiProfileId
+          ? { ...profile, ...update }
+          : profile,
       );
       const activeProfile =
-        profiles.find((profile) => profile.id === current.activeAiProfileId) ?? profiles[0];
+        profiles.find((profile) => profile.id === current.activeAiProfileId) ??
+        profiles[0];
       return {
         ...current,
         aiEndpoint: activeProfile.endpoint,
@@ -162,7 +206,8 @@ export function useAiProviderSettings({
   function handleResetActiveAiEndpoint() {
     handleUpdateActiveAiProfile({
       endpoint: AI_PROVIDER_PRESETS[activeAiProfile.preset].endpoint,
-      modelsEndpoint: AI_PROVIDER_PRESETS[activeAiProfile.preset].modelsEndpoint,
+      modelsEndpoint:
+        AI_PROVIDER_PRESETS[activeAiProfile.preset].modelsEndpoint,
     });
     setModelListResult(null);
   }
@@ -185,9 +230,14 @@ export function useAiProviderSettings({
   }
 
   function handleDeleteAiModel(model: string) {
-    const nextModels = activeAiProfile.models.filter((candidate) => candidate !== model);
+    const nextModels = activeAiProfile.models.filter(
+      (candidate) => candidate !== model,
+    );
     handleUpdateActiveAiProfile({
-      model: activeAiProfile.model === model ? (nextModels[0] ?? "") : activeAiProfile.model,
+      model:
+        activeAiProfile.model === model
+          ? (nextModels[0] ?? "")
+          : activeAiProfile.model,
       models: nextModels,
     });
   }
@@ -204,11 +254,17 @@ export function useAiProviderSettings({
 
     setIsFetchingModels(true);
     setModelListResult(null);
+    const generation = requestGeneration.current;
+    const controller = new AbortController();
+    controllers.current.add(controller);
     const result = await fetchAvailableModels({
       apiKey: activeAiProfile.apiKey,
       endpoint: activeAiProfile.endpoint,
       modelsEndpoint: activeAiProfile.modelsEndpoint,
+      signal: controller.signal,
     });
+    controllers.current.delete(controller);
+    if (generation !== requestGeneration.current) return;
     setModelListResult(result);
     setIsFetchingModels(false);
     if (result.ok) {
@@ -236,12 +292,18 @@ export function useAiProviderSettings({
 
     setIsTestingApi(true);
     setApiTestResult(null);
+    const generation = requestGeneration.current;
+    const controller = new AbortController();
+    controllers.current.add(controller);
     const result = await testChatCompletion({
       apiKey: activeAiProfile.apiKey,
       endpoint: activeAiProfile.endpoint,
       extraBodyJson: activeAiProfile.extraBodyJson,
       model: modelToTest,
+      signal: controller.signal,
     });
+    controllers.current.delete(controller);
+    if (generation !== requestGeneration.current) return;
     setApiTestResult(result);
     setIsTestingApi(false);
     if (result.ok) {
@@ -254,6 +316,7 @@ export function useAiProviderSettings({
       return;
     }
 
+    invalidateRequests();
     const nextProfile: AiProfile = {
       apiKey: "",
       endpoint: "",
@@ -292,7 +355,8 @@ export function useAiProviderSettings({
         : profile,
     );
     const nextActiveProfile =
-      nextProfiles.find((profile) => profile.id === pendingAiProfile.id) ?? nextProfiles[0];
+      nextProfiles.find((profile) => profile.id === pendingAiProfile.id) ??
+      nextProfiles[0];
     const savedPreferences = await savePreferences({
       activeAiProfileId: nextActiveProfile.id,
       aiEndpoint: nextActiveProfile.endpoint,
@@ -315,11 +379,15 @@ export function useAiProviderSettings({
       return;
     }
 
+    invalidateRequests();
     setDraft((current) => {
-      const profiles = current.aiProfiles.filter((profile) => profile.id !== pendingAiProfile.id);
+      const profiles = current.aiProfiles.filter(
+        (profile) => profile.id !== pendingAiProfile.id,
+      );
       const nextActiveProfile =
-        profiles.find((profile) => profile.id === pendingAiProfile.previousActiveId) ??
-        profiles[0];
+        profiles.find(
+          (profile) => profile.id === pendingAiProfile.previousActiveId,
+        ) ?? profiles[0];
       return {
         ...current,
         activeAiProfileId: nextActiveProfile.id,
@@ -343,6 +411,7 @@ export function useAiProviderSettings({
       return;
     }
 
+    invalidateRequests();
     setDraft((current) => {
       const profiles = current.aiProfiles.filter(
         (profile) => profile.id !== profileId,
@@ -350,8 +419,9 @@ export function useAiProviderSettings({
       const nextActiveProfile =
         current.activeAiProfileId === profileId
           ? profiles[0]
-          : current.aiProfiles.find((profile) => profile.id === current.activeAiProfileId) ??
-            profiles[0];
+          : (current.aiProfiles.find(
+              (profile) => profile.id === current.activeAiProfileId,
+            ) ?? profiles[0]);
       return {
         ...current,
         activeAiProfileId: nextActiveProfile.id,
@@ -365,7 +435,10 @@ export function useAiProviderSettings({
   }
 
   function handleRequestDeleteAiProfile(profileId: string) {
-    if (confirmingDelete?.type === "aiProfile" && confirmingDelete.id === profileId) {
+    if (
+      confirmingDelete?.type === "aiProfile" &&
+      confirmingDelete.id === profileId
+    ) {
       handleDeleteAiProfile(profileId);
       return;
     }

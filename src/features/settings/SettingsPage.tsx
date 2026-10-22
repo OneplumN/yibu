@@ -227,7 +227,7 @@ export function SettingsPage() {
       });
       if (desktopSaveResult === "saved") {
         showToast({
-          message: `已导出 ${snapshot.projects.length} 个项目 / ${snapshot.tasks.length} 个任务 / ${snapshot.reports.length} 个报告`,
+          message: `已导出 ${snapshot.projects.length} 个项目 / ${snapshot.tasks.length} 个任务 / ${snapshot.reports.length} 个报告（不含 API 密钥）`,
         });
         return;
       }
@@ -245,7 +245,7 @@ export function SettingsPage() {
       anchor.click();
       URL.revokeObjectURL(url);
       showToast({
-        message: `已导出 ${snapshot.projects.length} 个项目 / ${snapshot.tasks.length} 个任务 / ${snapshot.reports.length} 个报告`,
+        message: `已导出 ${snapshot.projects.length} 个项目 / ${snapshot.tasks.length} 个任务 / ${snapshot.reports.length} 个报告（不含 API 密钥）`,
       });
     } catch (error) {
       showToast({

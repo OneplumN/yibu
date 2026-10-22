@@ -18,7 +18,7 @@ export const focusRepository = {
     await getStorageAdapter().focusRefs.remove(taskId);
   },
 
-  async replaceAll(references: FocusReference[]) {
-    return getStorageAdapter().focusRefs.replaceAll(references);
+  async replaceAll(references: FocusReference[], expected?: FocusReference[]) {
+    return getStorageAdapter().focusRefs.replaceAll(references, expected);
   },
 };

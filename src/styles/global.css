@@ -3166,15 +3166,15 @@ body.sortable-dragging * {
 .dashboard-section--focus .focus-card {
   aspect-ratio: auto;
   gap: 7px;
-  grid-template-rows: 54px minmax(128px, 1fr) 36px;
+  grid-template-rows: 52px minmax(126px, 1fr) 36px;
   height: auto;
   min-height: 260px;
   padding: 14px;
 }
 
 .dashboard-section--focus .focus-card__top {
-  height: 54px;
-  min-height: 54px;
+  height: 52px;
+  min-height: 52px;
 }
 
 .dashboard-section--focus .focus-card__footer,
@@ -3184,7 +3184,7 @@ body.sortable-dragging * {
 
 .dashboard-section--focus .focus-card__tasklist {
   gap: 5px;
-  min-height: 128px;
+  min-height: 126px;
   padding: 10px 13px;
 }
 
@@ -3255,7 +3255,7 @@ body.sortable-dragging * {
   height: 64px;
   min-height: 64px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   z-index: 3;
 }
@@ -3265,7 +3265,7 @@ body.sortable-dragging * {
   display: grid;
   height: 100%;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   text-align: left;
 }
 
@@ -3437,7 +3437,7 @@ body.sortable-dragging * {
 }
 
 .focus-priority__menu {
-  background: rgba(255, 252, 246, 0.96);
+  background: var(--surface-raised);
   border: 1px solid color-mix(in srgb, var(--focus-card-border, var(--border-soft)) 40%, transparent);
   border-radius: 14px;
   box-shadow: 0 16px 32px -26px rgba(17, 25, 40, 0.16);

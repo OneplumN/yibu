@@ -120,6 +120,14 @@ describe("Home dashboard", () => {
     expect(focusWithin.queryByText("+1")).not.toBeInTheDocument();
     const priorityButton = focusWithin.getByRole("button", { name: "修改优先级：重要" });
     expect(priorityButton).toBeInTheDocument();
+    await user.click(priorityButton);
+    expect(focusWithin.getAllByRole("menuitemradio")).toHaveLength(3);
+    await user.keyboard("{Escape}");
+    expect(focusWithin.queryByRole("menu")).not.toBeInTheDocument();
+    expect(priorityButton).toHaveFocus();
+    await user.click(priorityButton);
+    await user.click(screen.getByRole("heading", { name: "Today" }));
+    expect(focusWithin.queryByRole("menu")).not.toBeInTheDocument();
     const editButton = focusWithin.getByRole("button", { name: "编辑" });
     expect(editButton).toBeInTheDocument();
     expect(focusWithin.getByRole("button", { name: "完成" })).toBeInTheDocument();
@@ -202,7 +210,7 @@ describe("Home dashboard", () => {
     await user.click(screen.getByRole("button", { name: "关闭任务详情" }));
 
     await user.click(priorityButton);
-    await user.click(screen.getByRole("button", { name: "紧急" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "紧急" }));
     await waitFor(() => {
       expect(useTaskStore.getState().tasks.find((item) => item.id === task.id)?.priority).toBe("urgent");
       expect(within(focusCard as HTMLElement).getByText("紧急")).toBeInTheDocument();

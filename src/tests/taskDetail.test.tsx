@@ -67,14 +67,14 @@ describe("Task detail", () => {
     expect(screen.queryByPlaceholderText("添加子任务")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "添加子任务" }));
     await user.type(screen.getByPlaceholderText("添加子任务"), "补充完成说明{Enter}");
-    await user.click(screen.getByRole("button", { name: "补充完成说明" }));
+    await user.click(await screen.findByRole("button", { name: "补充完成说明" }));
     await user.clear(screen.getByLabelText("编辑子项"));
     await user.type(screen.getByLabelText("编辑子项"), "补充完成说明-已编辑");
     await user.click(screen.getByRole("button", { name: "添加子任务" }));
     await user.type(screen.getByPlaceholderText("添加子任务"), "同步周报提纲{Enter}");
 
-    const firstRow = screen.getByText("补充完成说明-已编辑").closest(".checklist-row");
-    const secondRow = screen.getByText("同步周报提纲").closest(".checklist-row");
+    const firstRow = (await screen.findByText("补充完成说明-已编辑")).closest(".checklist-row");
+    const secondRow = (await screen.findByText("同步周报提纲")).closest(".checklist-row");
     expect(firstRow).not.toBeNull();
     expect(secondRow).not.toBeNull();
 

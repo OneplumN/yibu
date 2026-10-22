@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { queueLocalSnapshotSync } from "../../lib/localPersistence/localSnapshotApi";
 import { focusRepository } from "../../lib/storage/focusRepository";
 import type { FocusReference } from "../../types/focus";
+import { createWriteQueue } from "../../lib/storage/writeQueue";
 
 type FocusState = {
   addTask: (taskId: string) => Promise<void>;
@@ -20,58 +21,63 @@ function normalizeFocusRefs(focusRefs: FocusReference[]) {
   }));
 }
 
-export const useFocusStore = create<FocusState>((set, get) => ({
-  async addTask(taskId) {
-    if (get().focusRefs.some((ref) => ref.taskId === taskId)) {
-      return;
-    }
-    const reference: FocusReference = {
-      addedAt: new Date().toISOString(),
-      order: get().focusRefs.length,
-      taskId,
-    };
-    await focusRepository.add(reference);
-    set({ focusRefs: [...get().focusRefs, reference] });
+export const useFocusStore = create<FocusState>((set) => {
+  const write = createWriteQueue();
+  async function change(
+    transform: (refs: FocusReference[]) => FocusReference[],
+  ) {
+    const expected = await focusRepository.list();
+    const next = normalizeFocusRefs(transform([...expected]));
+    await focusRepository.replaceAll(next, expected);
+    set({ focusRefs: next });
     queueLocalSnapshotSync();
-  },
-  focusRefs: [],
-  isLoaded: false,
-  async loadFocus() {
-    const focusRefs = await focusRepository.list();
-    set({ focusRefs, isLoaded: true });
-    return focusRefs;
-  },
-  async removeTask(taskId) {
-    const nextRefs = normalizeFocusRefs(
-      get().focusRefs.filter((ref) => ref.taskId !== taskId),
-    );
-    await focusRepository.replaceAll(nextRefs);
-    set({ focusRefs: nextRefs });
-    queueLocalSnapshotSync();
-  },
-  async reorderTask(taskId, toIndex) {
-    const focusRefs = [...get().focusRefs];
-    const fromIndex = focusRefs.findIndex((ref) => ref.taskId === taskId);
-
-    if (fromIndex === -1 || fromIndex === toIndex) {
-      return;
-    }
-
-    const boundedIndex = Math.max(0, Math.min(toIndex, focusRefs.length - 1));
-    const [moved] = focusRefs.splice(fromIndex, 1);
-    focusRefs.splice(boundedIndex, 0, moved);
-
-    const normalized = normalizeFocusRefs(focusRefs);
-    await focusRepository.replaceAll(normalized);
-    set({ focusRefs: normalized });
-    queueLocalSnapshotSync();
-  },
-  async toggleTask(taskId) {
-    const exists = get().focusRefs.some((ref) => ref.taskId === taskId);
-    if (exists) {
-      await get().removeTask(taskId);
-      return;
-    }
-    await get().addTask(taskId);
-  },
-}));
+  }
+  return {
+    addTask: (taskId) =>
+      write(async () =>
+        change((refs) => {
+          if (refs.some((ref) => ref.taskId === taskId)) return refs;
+          return [
+            ...refs,
+            { taskId, addedAt: new Date().toISOString(), order: refs.length },
+          ];
+        }),
+      ),
+    focusRefs: [],
+    isLoaded: false,
+    async loadFocus() {
+      const focusRefs = await focusRepository.list();
+      set({ focusRefs, isLoaded: true });
+      return focusRefs;
+    },
+    removeTask: (taskId) =>
+      write(async () =>
+        change((refs) => refs.filter((ref) => ref.taskId !== taskId)),
+      ),
+    reorderTask: (taskId, toIndex) =>
+      write(async () =>
+        change((refs) => {
+          const from = refs.findIndex((ref) => ref.taskId === taskId);
+          if (from < 0) return refs;
+          const [moved] = refs.splice(from, 1);
+          refs.splice(Math.max(0, Math.min(toIndex, refs.length)), 0, moved);
+          return refs;
+        }),
+      ),
+    toggleTask: (taskId) =>
+      write(async () =>
+        change((refs) =>
+          refs.some((ref) => ref.taskId === taskId)
+            ? refs.filter((ref) => ref.taskId !== taskId)
+            : [
+                ...refs,
+                {
+                  taskId,
+                  addedAt: new Date().toISOString(),
+                  order: refs.length,
+                },
+              ],
+        ),
+      ),
+  };
+});

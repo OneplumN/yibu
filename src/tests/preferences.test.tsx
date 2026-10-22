@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "../app/App";
@@ -476,6 +476,23 @@ describe("preferences store", () => {
       "/api/ai/chat-completions",
       expect.any(Object),
     );
+  });
+
+  test("ignores an old model list after switching providers", async () => {
+    let resolveRequest!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveRequest = resolve;
+    })));
+    const user = userEvent.setup();
+    renderWithRouter(<App />);
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Kimi 未配置" }));
+    await user.click(screen.getByRole("button", { name: "获取模型" }));
+    await user.click(screen.getByRole("button", { name: "DeepSeek 未配置" }));
+    await act(async () => resolveRequest(new Response(JSON.stringify({data:[{id:"old-provider-model"}]}))));
+    expect(screen.queryByText("old-provider-model")).not.toBeInTheDocument();
+    expect(screen.queryByText("模型已更新")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeEnabled();
   });
 
   test("fetches models and lets the user add one from settings", async () => {

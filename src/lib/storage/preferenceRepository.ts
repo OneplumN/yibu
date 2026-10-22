@@ -87,7 +87,7 @@ function normalizeTodayStepHandlePosition(position: unknown): TodayStepHandlePos
   return { edge, monitorName, monitorX, monitorY, yRatio };
 }
 
-function normalizePreferences(preferences?: Partial<Preferences>): Preferences {
+export function normalizePreferences(preferences?: Partial<Preferences>): Preferences {
   const legacyPreferences = preferences as
     | (Partial<Preferences> & { quickStepShortcut?: unknown })
     | undefined;

@@ -2,6 +2,9 @@ import { getStorageAdapter } from "./getStorageAdapter";
 import type { Task } from "../../types/task";
 
 export const taskRepository = {
+  async saveIfUnchanged(task: Task, expected: Task) {
+    return getStorageAdapter().tasks.saveIfUnchanged(task, expected);
+  },
   async delete(taskId: string) {
     await getStorageAdapter().tasks.delete(taskId);
   },

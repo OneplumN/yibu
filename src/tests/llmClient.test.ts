@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntime } from "../lib/platform/runtime";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../lib/platform/runtime", () => ({
+  isTauriRuntime: vi.fn(() => false),
+}));
 import {
   buildRequestPreview,
   fetchAvailableModels,
@@ -10,7 +17,109 @@ import {
 
 describe("llmClient", () => {
   afterEach(() => {
+    vi.mocked(isTauriRuntime).mockReturnValue(false);
     vi.restoreAllMocks();
+  });
+
+  test("uses native HTTP for model discovery and chat in the desktop app", async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    let httpCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command !== "ai_http_request") return undefined;
+      httpCalls += 1;
+      return httpCalls === 1
+        ? {
+            status: 200,
+            content_type: "application/json",
+            body: JSON.stringify({ data: [{ id: "desktop-model" }] }),
+          }
+        : {
+            status: 200,
+            content_type: "application/json",
+            body: JSON.stringify({ choices: [{ message: { content: "OK" } }] }),
+          };
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const models = await fetchAvailableModels({
+      endpoint: "https://example.com/v1",
+      apiKey: "test-key",
+    });
+    expect(models).toMatchObject({ ok: true, models: ["desktop-model"] });
+    expect(invoke).toHaveBeenCalledWith("ai_http_request", {
+      requestId: expect.any(String),
+      url: "https://example.com/v1/models",
+      apiKey: "test-key",
+      body: null,
+    });
+    const result = await testChatCompletion({
+      endpoint: "https://example.com/v1",
+      model: "desktop-model",
+    });
+    expect(result).toMatchObject({ ok: true, content: "OK" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("cancels native HTTP when the caller aborts", async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    let rejectRequest!: (reason: unknown) => void;
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "ai_http_request")
+        return new Promise((_resolve, reject) => {
+          rejectRequest = reject;
+        });
+      if (command === "ai_cancel_request") rejectRequest?.("请求已取消。");
+      return undefined;
+    });
+    const controller = new AbortController();
+    const pending = testChatCompletion({
+      endpoint: "https://example.com/v1",
+      model: "test",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(rejectRequest).toBeDefined());
+    controller.abort();
+    expect(await pending).toMatchObject({ ok: false, error: "请求已取消。" });
+    expect(invoke).toHaveBeenCalledWith("ai_cancel_request", {
+      requestId: expect.any(String),
+    });
+  });
+
+  test("does not treat HTML or an empty completion as a successful API test", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response("<html>login</html>", {
+            headers: { "Content-Type": "text/html" },
+          }),
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [] }))),
+    );
+    const options = { endpoint: "https://example.com/v1", model: "test" };
+    expect(await testChatCompletion(options)).toMatchObject({ ok: false });
+    expect(await testChatCompletion(options)).toMatchObject({
+      ok: false,
+      status: 200,
+    });
+  });
+
+  test("rejects HTML models responses and accepts top-level model arrays", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("<html>login</html>"))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify([{ id: "model-a" }, { id: "model-b" }])),
+        ),
+    );
+    const options = { endpoint: "https://example.com/v1" };
+    expect(await fetchAvailableModels(options)).toMatchObject({ ok: false });
+    expect(await fetchAvailableModels(options)).toMatchObject({
+      ok: true,
+      models: ["model-a", "model-b"],
+    });
   });
 
   test("builds a masked request preview with extra body JSON", () => {
@@ -71,9 +180,9 @@ describe("llmClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    expect(normalizeModelsEndpoint("https://api.deepseek.com/chat/completions")).toBe(
-      "https://api.deepseek.com/models",
-    );
+    expect(
+      normalizeModelsEndpoint("https://api.deepseek.com/chat/completions"),
+    ).toBe("https://api.deepseek.com/models");
 
     const result = await fetchAvailableModels({
       apiKey: "secret-key",
@@ -108,13 +217,11 @@ describe("llmClient", () => {
       "https://code.heihuzi.ai/models",
     ]);
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        json: async () => ({ data: [{ id: "gpt-5.5" }] }),
-        ok: true,
-        status: 200,
-      });
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      json: async () => ({ data: [{ id: "gpt-5.5" }] }),
+      ok: true,
+      status: 200,
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchAvailableModels({

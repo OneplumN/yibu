@@ -88,7 +88,9 @@ function ReportComparisonCard({
   onCopy: (content: string) => Promise<void>;
   onRegenerate: () => Promise<void>;
 }) {
-  const [polishedContent, setPolishedContent] = useState(comparison.report?.polishedContent ?? "");
+  const [polishedContent, setPolishedContent] = useState(
+    comparison.report?.polishedContent ?? "",
+  );
 
   useEffect(() => {
     setPolishedContent(comparison.report?.polishedContent ?? "");
@@ -108,7 +110,11 @@ function ReportComparisonCard({
           {comparison.error ?? "This model failed to generate a report."}
         </div>
         <footer>
-          <button disabled={isRegenerating} onClick={() => void onRegenerate()} type="button">
+          <button
+            disabled={isRegenerating}
+            onClick={() => void onRegenerate()}
+            type="button"
+          >
             {isRegenerating ? "生成中..." : "重试"}
           </button>
         </footer>
@@ -132,10 +138,18 @@ function ReportComparisonCard({
         {polishedContent}
       </section>
       <footer>
-        <button disabled={isRegenerating} onClick={() => void onRegenerate()} type="button">
+        <button
+          disabled={isRegenerating}
+          onClick={() => void onRegenerate()}
+          type="button"
+        >
           {isRegenerating ? "生成中..." : "重新生成"}
         </button>
-        <button disabled={isRegenerating} onClick={() => void onCopy(polishedContent)} type="button">
+        <button
+          disabled={isRegenerating}
+          onClick={() => void onCopy(polishedContent)}
+          type="button"
+        >
           复制
         </button>
       </footer>
@@ -230,7 +244,10 @@ function parseDateInput(value: string) {
   return new Date(year, month - 1, day);
 }
 
-function getReportRangeFromInputs(startValue: string, endValue: string): ReportRange {
+function getReportRangeFromInputs(
+  startValue: string,
+  endValue: string,
+): ReportRange {
   const startInput = parseDateInput(startValue);
   const endInput = parseDateInput(endValue);
   const [start, end] =
@@ -247,7 +264,10 @@ function getReportRangeFromInputs(startValue: string, endValue: string): ReportR
 
 function isInRange(date: Date, range: ReportRange) {
   const value = startOfDay(date).getTime();
-  return value >= new Date(range.rangeStart).getTime() && value <= new Date(range.rangeEnd).getTime();
+  return (
+    value >= new Date(range.rangeStart).getTime() &&
+    value <= new Date(range.rangeEnd).getTime()
+  );
 }
 
 function getCompletedAt(task: Task) {
@@ -273,33 +293,46 @@ function getCompletedTasksInRange(tasks: Task[], range: ReportRange) {
     .filter((task) => {
       const completedAt = getCompletedAt(task);
 
-      return task.status === "done" && completedAt >= range.rangeStart && completedAt <= range.rangeEnd;
+      return (
+        task.status === "done" &&
+        completedAt >= range.rangeStart &&
+        completedAt <= range.rangeEnd
+      );
     })
-    .sort((left, right) => getCompletedAt(left).localeCompare(getCompletedAt(right)));
+    .sort((left, right) =>
+      getCompletedAt(left).localeCompare(getCompletedAt(right)),
+    );
 }
 
 function getCompletedTaskGroups(tasks: Task[]) {
-  return tasks.reduce<Array<{ dateKey: string; label: string; tasks: Task[] }>>((groups, task) => {
-    const completedAt = new Date(getCompletedAt(task));
-    const dateKey = formatDateKey(completedAt);
-    const currentGroup = groups.find((group) => group.dateKey === dateKey);
+  return tasks.reduce<Array<{ dateKey: string; label: string; tasks: Task[] }>>(
+    (groups, task) => {
+      const completedAt = new Date(getCompletedAt(task));
+      const dateKey = formatDateKey(completedAt);
+      const currentGroup = groups.find((group) => group.dateKey === dateKey);
 
-    if (currentGroup) {
-      currentGroup.tasks.push(task);
+      if (currentGroup) {
+        currentGroup.tasks.push(task);
+        return groups;
+      }
+
+      groups.push({
+        dateKey,
+        label: formatDateLabel(completedAt),
+        tasks: [task],
+      });
       return groups;
-    }
-
-    groups.push({
-      dateKey,
-      label: formatDateLabel(completedAt),
-      tasks: [task],
-    });
-    return groups;
-  }, []);
+    },
+    [],
+  );
 }
 
 function getCalendarDates(visibleMonth: Date) {
-  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+  const firstDay = new Date(
+    visibleMonth.getFullYear(),
+    visibleMonth.getMonth(),
+    1,
+  );
   const start = getWeekStart(firstDay);
 
   return Array.from({ length: 42 }, (_, index) => {
@@ -321,21 +354,41 @@ export function ReportCenterPage() {
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [modelPickerValue, setModelPickerValue] = useState("");
   const [rangeAnchorDate, setRangeAnchorDate] = useState<string | null>(null);
-  const [regeneratingProfileIds, setRegeneratingProfileIds] = useState<string[]>([]);
-  const [reportComparisons, setReportComparisons] = useState<ReportComparison[]>([]);
-  const [selectedAiProfileIds, setSelectedAiProfileIds] = useState<string[]>([]);
+  const [regeneratingProfileIds, setRegeneratingProfileIds] = useState<
+    string[]
+  >([]);
+  const [reportComparisons, setReportComparisons] = useState<
+    ReportComparison[]
+  >([]);
+  const [selectedAiProfileIds, setSelectedAiProfileIds] = useState<string[]>(
+    [],
+  );
   const [selectedAiRoleTemplateId, setSelectedAiRoleTemplateId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedStartDate, setSelectedStartDate] = useState(() => formatDateInput(new Date()));
-  const [selectedEndDate, setSelectedEndDate] = useState(() => formatDateInput(new Date()));
+  const [selectedStartDate, setSelectedStartDate] = useState(() =>
+    formatDateInput(new Date()),
+  );
+  const [selectedEndDate, setSelectedEndDate] = useState(() =>
+    formatDateInput(new Date()),
+  );
   const [visibleMonth, setVisibleMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
   const generationRunRef = useRef(0);
+  const requestControllers = useRef(new Set<AbortController>());
+  useEffect(
+    () => () => {
+      requestControllers.current.forEach((controller) => controller.abort());
+      requestControllers.current.clear();
+    },
+    [],
+  );
 
   const latestCompletedAt = useMemo(() => {
     return tasks
-      .filter((task) => task.status === "done" && task.completionWrapUp?.completedAt)
+      .filter(
+        (task) => task.status === "done" && task.completionWrapUp?.completedAt,
+      )
       .map((task) => task.completionWrapUp?.completedAt ?? "")
       .sort((left, right) => right.localeCompare(left))[0];
   }, [tasks]);
@@ -352,13 +405,17 @@ export function ReportCenterPage() {
     [completedTasks],
   );
   const isSingleDayRange = useMemo(
-    () => formatDateKey(new Date(selectedRange.rangeStart)) === formatDateKey(new Date(selectedRange.rangeEnd)),
+    () =>
+      formatDateKey(new Date(selectedRange.rangeStart)) ===
+      formatDateKey(new Date(selectedRange.rangeEnd)),
     [selectedRange.rangeEnd, selectedRange.rangeStart],
   );
   const selectedAiProfiles = useMemo(
     () =>
       selectedAiProfileIds
-        .map((profileId) => preferences.aiProfiles.find((profile) => profile.id === profileId))
+        .map((profileId) =>
+          preferences.aiProfiles.find((profile) => profile.id === profileId),
+        )
         .filter((profile): profile is AiProfile => Boolean(profile)),
     [preferences.aiProfiles, selectedAiProfileIds],
   );
@@ -366,19 +423,30 @@ export function ReportCenterPage() {
     () =>
       selectedAiProfileIds.length >= MAX_REPORT_COMPARE_MODELS
         ? []
-        : preferences.aiProfiles.filter((profile) => !selectedAiProfileIds.includes(profile.id)),
+        : preferences.aiProfiles.filter(
+            (profile) => !selectedAiProfileIds.includes(profile.id),
+          ),
     [preferences.aiProfiles, selectedAiProfileIds],
   );
   const selectedAiRoleTemplate = useMemo(
     () =>
-      preferences.aiRoleTemplates.find((template) => template.id === selectedAiRoleTemplateId) ??
+      preferences.aiRoleTemplates.find(
+        (template) => template.id === selectedAiRoleTemplateId,
+      ) ??
       preferences.aiRoleTemplates.find(
         (template) => template.id === preferences.activeAiRoleTemplateId,
       ) ??
       null,
-    [preferences.activeAiRoleTemplateId, preferences.aiRoleTemplates, selectedAiRoleTemplateId],
+    [
+      preferences.activeAiRoleTemplateId,
+      preferences.aiRoleTemplates,
+      selectedAiRoleTemplateId,
+    ],
   );
-  const calendarDates = useMemo(() => getCalendarDates(visibleMonth), [visibleMonth]);
+  const calendarDates = useMemo(
+    () => getCalendarDates(visibleMonth),
+    [visibleMonth],
+  );
   const completedCountByDay = useMemo(() => {
     const countByDay = new Map<string, number>();
 
@@ -399,7 +467,9 @@ export function ReportCenterPage() {
     [selectedTaskId, tasks],
   );
   const selectedTaskProject = useMemo(
-    () => projects.find((project) => project.id === selectedTask?.projectId) ?? null,
+    () =>
+      projects.find((project) => project.id === selectedTask?.projectId) ??
+      null,
     [projects, selectedTask?.projectId],
   );
   const reportInputSignature = useMemo(
@@ -436,8 +506,11 @@ export function ReportCenterPage() {
     ],
   );
   const comparisonColumnCount =
-    reportComparisons.length > 0 ? reportComparisons.length : selectedAiProfiles.length;
-  const generateActionLabel = reportComparisons.length > 0
+    reportComparisons.length > 0
+      ? reportComparisons.length
+      : selectedAiProfiles.length;
+  const generateActionLabel =
+    reportComparisons.length > 0
       ? selectedAiProfiles.length > 1
         ? "重新对比"
         : "重新生成"
@@ -454,7 +527,9 @@ export function ReportCenterPage() {
     const latestDateInput = formatDateInput(latestDate);
     setSelectedStartDate(latestDateInput);
     setSelectedEndDate(latestDateInput);
-    setVisibleMonth(new Date(latestDate.getFullYear(), latestDate.getMonth(), 1));
+    setVisibleMonth(
+      new Date(latestDate.getFullYear(), latestDate.getMonth(), 1),
+    );
   }, [hasPickedDate, latestCompletedAt]);
 
   useEffect(() => {
@@ -463,11 +538,15 @@ export function ReportCenterPage() {
         preferences.aiProfiles.some((profile) => profile.id === profileId),
       );
       if (validProfileIds.length > 0) {
-        return validProfileIds.length === currentProfileIds.length ? currentProfileIds : validProfileIds;
+        return validProfileIds.length === currentProfileIds.length
+          ? currentProfileIds
+          : validProfileIds;
       }
 
       const fallbackProfile =
-        preferences.aiProfiles.find((profile) => profile.id === preferences.activeAiProfileId) ??
+        preferences.aiProfiles.find(
+          (profile) => profile.id === preferences.activeAiProfileId,
+        ) ??
         preferences.aiProfiles[0] ??
         null;
 
@@ -476,9 +555,13 @@ export function ReportCenterPage() {
 
     if (
       preferences.aiRoleTemplates.length > 0 &&
-      !preferences.aiRoleTemplates.some((template) => template.id === selectedAiRoleTemplateId)
+      !preferences.aiRoleTemplates.some(
+        (template) => template.id === selectedAiRoleTemplateId,
+      )
     ) {
-      setSelectedAiRoleTemplateId(preferences.activeAiRoleTemplateId || preferences.aiRoleTemplates[0].id);
+      setSelectedAiRoleTemplateId(
+        preferences.activeAiRoleTemplateId || preferences.aiRoleTemplates[0].id,
+      );
     }
   }, [
     preferences.activeAiProfileId,
@@ -494,26 +577,39 @@ export function ReportCenterPage() {
   }, [reportInputSignature]);
 
   async function createComparisonReport(profile: AiProfile) {
-    return createReportRecord({
-      generation: {
-        apiKey: profile.apiKey,
-        endpoint: profile.endpoint,
-        extraBodyJson: profile.extraBodyJson,
-        modelName: profile.model,
-        roleName: selectedAiRoleTemplate?.name ?? (preferences.aiRole ? "Current Role" : ""),
-        rolePrompt: selectedAiRoleTemplate?.prompt ?? preferences.aiRole,
-      },
-      now: new Date(),
-      projects,
-      range: selectedRange,
-      scopeLabel: selectedRange.label,
-      tasks,
-      type: "custom",
-    });
+    const controller = new AbortController();
+    requestControllers.current.add(controller);
+    try {
+      return await createReportRecord({
+        generation: {
+          signal: controller.signal,
+          apiKey: profile.apiKey,
+          endpoint: profile.endpoint,
+          extraBodyJson: profile.extraBodyJson,
+          modelName: profile.model,
+          roleName:
+            selectedAiRoleTemplate?.name ??
+            (preferences.aiRole ? "Current Role" : ""),
+          rolePrompt: selectedAiRoleTemplate?.prompt ?? preferences.aiRole,
+        },
+        now: new Date(),
+        projects,
+        range: selectedRange,
+        scopeLabel: selectedRange.label,
+        tasks,
+        type: "custom",
+      });
+    } finally {
+      requestControllers.current.delete(controller);
+    }
   }
 
   async function handleGenerateCompare() {
-    if (selectedAiProfiles.length === 0 || completedTasks.length === 0 || isGeneratingCompare) {
+    if (
+      selectedAiProfiles.length === 0 ||
+      completedTasks.length === 0 ||
+      isGeneratingCompare
+    ) {
       return;
     }
 
@@ -531,7 +627,10 @@ export function ReportCenterPage() {
             };
           } catch (error) {
             return {
-              error: error instanceof Error ? error.message : "This model failed to generate a report.",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "This model failed to generate a report.",
               profileId: profile.id,
               profileName: profile.name,
               report: null,
@@ -551,13 +650,18 @@ export function ReportCenterPage() {
   }
 
   async function handleRegenerateComparison(profileId: string) {
-    const profile = preferences.aiProfiles.find((item) => item.id === profileId);
+    const profile = preferences.aiProfiles.find(
+      (item) => item.id === profileId,
+    );
     if (!profile || regeneratingProfileIds.includes(profileId)) {
       return;
     }
 
     const runId = generationRunRef.current;
-    setRegeneratingProfileIds((currentProfileIds) => [...currentProfileIds, profileId]);
+    setRegeneratingProfileIds((currentProfileIds) => [
+      ...currentProfileIds,
+      profileId,
+    ]);
     showToast({ message: `正在重新生成：${profile.name}` });
     try {
       const report = await createComparisonReport(profile);
@@ -584,7 +688,10 @@ export function ReportCenterPage() {
         currentComparisons.map((comparison) =>
           comparison.profileId === profileId
             ? {
-                error: error instanceof Error ? error.message : "This model failed to generate a report.",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "This model failed to generate a report.",
                 profileId: profile.id,
                 profileName: profile.name,
                 report: null,
@@ -596,7 +703,9 @@ export function ReportCenterPage() {
     } finally {
       if (generationRunRef.current === runId) {
         setRegeneratingProfileIds((currentProfileIds) =>
-          currentProfileIds.filter((currentProfileId) => currentProfileId !== profileId),
+          currentProfileIds.filter(
+            (currentProfileId) => currentProfileId !== profileId,
+          ),
         );
       }
     }
@@ -641,6 +750,8 @@ export function ReportCenterPage() {
   }
 
   function handleCloseGenerateModal() {
+    requestControllers.current.forEach((controller) => controller.abort());
+    requestControllers.current.clear();
     generationRunRef.current += 1;
     setIsGenerateModalOpen(false);
     setIsGeneratingCompare(false);
@@ -657,7 +768,10 @@ export function ReportCenterPage() {
       return;
     }
 
-    setSelectedAiProfileIds((currentProfileIds) => [...currentProfileIds, profileId]);
+    setSelectedAiProfileIds((currentProfileIds) => [
+      ...currentProfileIds,
+      profileId,
+    ]);
     setModelPickerValue("");
     setReportComparisons([]);
   }
@@ -668,10 +782,14 @@ export function ReportCenterPage() {
     }
 
     setSelectedAiProfileIds((currentProfileIds) =>
-      currentProfileIds.filter((currentProfileId) => currentProfileId !== profileId),
+      currentProfileIds.filter(
+        (currentProfileId) => currentProfileId !== profileId,
+      ),
     );
     setReportComparisons((currentComparisons) =>
-      currentComparisons.filter((comparison) => comparison.profileId !== profileId),
+      currentComparisons.filter(
+        (comparison) => comparison.profileId !== profileId,
+      ),
     );
   }
 
@@ -690,7 +808,10 @@ export function ReportCenterPage() {
 
     const anchor = parseDateInput(rangeAnchorDate);
     const next = parseDateInput(nextDate);
-    const [start, end] = anchor.getTime() <= next.getTime() ? [rangeAnchorDate, nextDate] : [nextDate, rangeAnchorDate];
+    const [start, end] =
+      anchor.getTime() <= next.getTime()
+        ? [rangeAnchorDate, nextDate]
+        : [nextDate, rangeAnchorDate];
     setRangeAnchorDate(null);
     setSelectedStartDate(start);
     setSelectedEndDate(end);
@@ -698,7 +819,8 @@ export function ReportCenterPage() {
 
   function handleMonthChange(direction: -1 | 1) {
     setVisibleMonth(
-      (current) => new Date(current.getFullYear(), current.getMonth() + direction, 1),
+      (current) =>
+        new Date(current.getFullYear(), current.getMonth() + direction, 1),
     );
   }
 
@@ -720,7 +842,11 @@ export function ReportCenterPage() {
           className="report-generate-button"
           disabled={completedTasks.length === 0}
           onClick={() => setIsGenerateModalOpen(true)}
-          title={completedTasks.length === 0 ? "暂无已完成任务，无法生成报告" : "Generate AI Report"}
+          title={
+            completedTasks.length === 0
+              ? "暂无已完成任务，无法生成报告"
+              : "Generate AI Report"
+          }
           type="button"
         >
           <span>Generate AI Report</span>
@@ -752,7 +878,8 @@ export function ReportCenterPage() {
                   <header className="report-completed-group__header">
                     <span>{group.label}</span>
                     <small>
-                      {group.tasks.length} {group.tasks.length === 1 ? "task" : "tasks"}
+                      {group.tasks.length}{" "}
+                      {group.tasks.length === 1 ? "task" : "tasks"}
                     </small>
                   </header>
                 )}
@@ -760,16 +887,13 @@ export function ReportCenterPage() {
                   const completedAt = new Date(getCompletedAt(task));
                   const preview = getTaskReportPreview(task);
                   return (
-                    <article
-                      className="report-completed-item"
-                      key={task.id}
-                    >
-                      <time dateTime={getCompletedAt(task)}>{formatTaskTime(completedAt)}</time>
+                    <article className="report-completed-item" key={task.id}>
+                      <time dateTime={getCompletedAt(task)}>
+                        {formatTaskTime(completedAt)}
+                      </time>
                       <div className="report-completed-item__content">
                         <strong title={task.title}>{task.title}</strong>
-                        {preview ? (
-                          <p title={preview}>{preview}</p>
-                        ) : null}
+                        {preview ? <p title={preview}>{preview}</p> : null}
                       </div>
                       <button
                         aria-label="编辑"
@@ -789,7 +913,8 @@ export function ReportCenterPage() {
           </div>
         )}
         <footer className="report-completed-summary">
-          {completedTasks.length} {completedTasks.length === 1 ? "completed task" : "completed tasks"}
+          {completedTasks.length}{" "}
+          {completedTasks.length === 1 ? "completed task" : "completed tasks"}
         </footer>
       </section>
 
@@ -858,7 +983,10 @@ export function ReportCenterPage() {
                 </button>
               </div>
 
-              <div className="report-calendar-grid report-calendar-grid--weekdays" aria-hidden="true">
+              <div
+                className="report-calendar-grid report-calendar-grid--weekdays"
+                aria-hidden="true"
+              >
                 {WEEKDAY_LABELS.map((weekday) => (
                   <span key={weekday}>{weekday}</span>
                 ))}
@@ -867,10 +995,16 @@ export function ReportCenterPage() {
               <div className="report-calendar-grid" role="grid">
                 {calendarDates.map((date) => {
                   const dateKey = formatDateKey(date);
-                  const rangeStartKey = formatDateKey(new Date(selectedRange.rangeStart));
-                  const rangeEndKey = formatDateKey(new Date(selectedRange.rangeEnd));
-                  const isCurrentMonth = date.getMonth() === visibleMonth.getMonth();
-                  const isSelected = dateKey === rangeStartKey || dateKey === rangeEndKey;
+                  const rangeStartKey = formatDateKey(
+                    new Date(selectedRange.rangeStart),
+                  );
+                  const rangeEndKey = formatDateKey(
+                    new Date(selectedRange.rangeEnd),
+                  );
+                  const isCurrentMonth =
+                    date.getMonth() === visibleMonth.getMonth();
+                  const isSelected =
+                    dateKey === rangeStartKey || dateKey === rangeEndKey;
                   const inRange = isInRange(date, selectedRange);
                   const taskCount = completedCountByDay.get(dateKey) ?? 0;
 
@@ -889,7 +1023,9 @@ export function ReportCenterPage() {
                       type="button"
                     >
                       <span>{date.getDate()}</span>
-                      {taskCount > 0 ? <i aria-label={`${taskCount} 个已完成任务`} /> : null}
+                      {taskCount > 0 ? (
+                        <i aria-label={`${taskCount} 个已完成任务`} />
+                      ) : null}
                     </button>
                   );
                 })}
@@ -900,7 +1036,11 @@ export function ReportCenterPage() {
           <footer className="report-time-modal__footer">
             <div>
               <span>已选范围</span>
-              <strong>{rangeAnchorDate ? `${selectedRange.label} · 选择结束日` : selectedRange.label}</strong>
+              <strong>
+                {rangeAnchorDate
+                  ? `${selectedRange.label} · 选择结束日`
+                  : selectedRange.label}
+              </strong>
             </div>
             <button
               onClick={() => {
@@ -922,7 +1062,10 @@ export function ReportCenterPage() {
           title="生成报告"
         >
           <div className="report-generate-flow">
-            <section className="report-generate-setup" aria-label="模型对比配置">
+            <section
+              className="report-generate-setup"
+              aria-label="模型对比配置"
+            >
               <p className="report-generate-setup-title">生成参数</p>
               <div className="report-generate-section">
                 <p className="report-generate-section__label">日期</p>
@@ -945,21 +1088,27 @@ export function ReportCenterPage() {
                   <div>
                     <p>模型</p>
                     <span className="report-generate-model-count">
-                      已选 {selectedAiProfiles.length}/{MAX_REPORT_COMPARE_MODELS}
+                      已选 {selectedAiProfiles.length}/
+                      {MAX_REPORT_COMPARE_MODELS}
                     </span>
                   </div>
                 </div>
 
                 <div className="report-generate-model-bar">
                   {selectedAiProfiles.map((profile, index) => (
-                    <div className="report-generate-model-card" key={profile.id}>
+                    <div
+                      className="report-generate-model-card"
+                      key={profile.id}
+                    >
                       <span>API {index + 1}</span>
                       <strong>{profile.name}</strong>
                       {selectedAiProfiles.length > 1 ? (
                         <button
                           aria-label={`Remove model ${profile.name}`}
                           className="report-generate-model-remove"
-                          onClick={() => handleRemoveComparisonModel(profile.id)}
+                          onClick={() =>
+                            handleRemoveComparisonModel(profile.id)
+                          }
                           type="button"
                         >
                           x
@@ -975,7 +1124,9 @@ export function ReportCenterPage() {
                         <select
                           aria-label="Add API"
                           title="添加模型"
-                          onChange={(event) => handleAddComparisonModel(event.target.value)}
+                          onChange={(event) =>
+                            handleAddComparisonModel(event.target.value)
+                          }
                           value={modelPickerValue}
                         >
                           <option value="">+</option>
@@ -1004,11 +1155,14 @@ export function ReportCenterPage() {
                 <section className="report-generate-role" aria-label="角色">
                   <span className="report-generate-section__label">角色</span>
                   {preferences.aiRoleTemplates.length === 0 ? (
-                    <div className="report-generate-role__empty">暂无角色模板</div>
+                    <div className="report-generate-role__empty">
+                      暂无角色模板
+                    </div>
                   ) : (
                     <div className="report-generate-role__list">
                       {preferences.aiRoleTemplates.map((template) => {
-                        const isSelected = selectedAiRoleTemplate?.id === template.id;
+                        const isSelected =
+                          selectedAiRoleTemplate?.id === template.id;
                         return (
                           <button
                             aria-pressed={isSelected}
@@ -1037,7 +1191,9 @@ export function ReportCenterPage() {
                 <button
                   className={[
                     "report-generate-modal__action",
-                    reportComparisons.length > 0 ? "report-generate-modal__action--secondary" : "",
+                    reportComparisons.length > 0
+                      ? "report-generate-modal__action--secondary"
+                      : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -1066,11 +1222,14 @@ export function ReportCenterPage() {
                 </div>
               </header>
 
-              {reportComparisons.length > 0 || (isGeneratingCompare && selectedAiProfiles.length > 0) ? (
+              {reportComparisons.length > 0 ||
+              (isGeneratingCompare && selectedAiProfiles.length > 0) ? (
                 <div
                   className={[
                     "report-compare-grid",
-                    comparisonColumnCount <= 1 ? "report-compare-grid--single" : "",
+                    comparisonColumnCount <= 1
+                      ? "report-compare-grid--single"
+                      : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -1079,14 +1238,21 @@ export function ReportCenterPage() {
                     ? reportComparisons.map((comparison) => (
                         <ReportComparisonCard
                           comparison={comparison}
-                          isRegenerating={regeneratingProfileIds.includes(comparison.profileId)}
+                          isRegenerating={regeneratingProfileIds.includes(
+                            comparison.profileId,
+                          )}
                           key={comparison.profileId}
                           onCopy={handleCopyReport}
-                          onRegenerate={() => handleRegenerateComparison(comparison.profileId)}
+                          onRegenerate={() =>
+                            handleRegenerateComparison(comparison.profileId)
+                          }
                         />
                       ))
                     : selectedAiProfiles.map((profile) => (
-                        <ReportComparisonSkeleton key={profile.id} profileName={profile.name} />
+                        <ReportComparisonSkeleton
+                          key={profile.id}
+                          profileName={profile.name}
+                        />
                       ))}
                 </div>
               ) : (

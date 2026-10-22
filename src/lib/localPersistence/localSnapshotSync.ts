@@ -1,5 +1,6 @@
 import { exportSnapshot, type AppSnapshot } from "../export/exportSnapshot";
 import { importSnapshot, validateSnapshot } from "../import/importSnapshot";
+import { isTauriRuntime } from "../platform/runtime";
 
 const LOCAL_SNAPSHOT_ENDPOINT = "/api/local-snapshot";
 const LOCAL_SYNC_DEBOUNCE_MS = 450;
@@ -7,6 +8,7 @@ const LOCAL_SYNC_DEBOUNCE_MS = 450;
 let restorePromise: Promise<void> | null = null;
 let syncTimeoutId: number | null = null;
 let isRestoringLocalSnapshot = false;
+let writeTail = Promise.resolve();
 
 function canUseLocalSnapshotSync() {
   return import.meta.env.DEV && import.meta.env.MODE !== "test";
@@ -35,13 +37,28 @@ async function readLocalSnapshot() {
 }
 
 async function writeLocalSnapshot(snapshot: AppSnapshot) {
-  await fetch(LOCAL_SNAPSHOT_ENDPOINT, {
+  const response = await fetch(LOCAL_SNAPSHOT_ENDPOINT, {
     body: JSON.stringify(snapshot),
     headers: {
       "Content-Type": "application/json",
     },
     method: "PUT",
   });
+  if (!response.ok)
+    throw new Error(`Local snapshot write failed (${response.status})`);
+}
+
+export function persistLocalSnapshotNow(): Promise<void> {
+  if (!canUseLocalSnapshotSync()) return Promise.resolve();
+  if (syncTimeoutId !== null) {
+    window.clearTimeout(syncTimeoutId);
+    syncTimeoutId = null;
+  }
+  const write = writeTail.then(async () =>
+    writeLocalSnapshot(await exportSnapshot()),
+  );
+  writeTail = write.catch(() => {});
+  return write;
 }
 
 export function scheduleLocalSnapshotSync() {
@@ -55,22 +72,21 @@ export function scheduleLocalSnapshotSync() {
 
   syncTimeoutId = window.setTimeout(() => {
     syncTimeoutId = null;
-    void exportSnapshot()
-      .then(writeLocalSnapshot)
-      .catch((error: unknown) => {
-        console.warn("Local snapshot sync failed.", error);
-      });
+    void persistLocalSnapshotNow().catch((error: unknown) => {
+      console.warn("Local snapshot sync failed.", error);
+    });
   }, LOCAL_SYNC_DEBOUNCE_MS);
 }
 
 export function restoreLocalSnapshot() {
-  if (!canUseLocalSnapshotSync()) {
+  // Desktop SQLite is authoritative; a stale Vite snapshot must never replace it on startup.
+  if (!canUseLocalSnapshotSync() || isTauriRuntime()) {
     return Promise.resolve();
   }
 
   restorePromise ??= (async () => {
     const localSnapshot = await readLocalSnapshot();
-    const snapshotToRestore = localSnapshot ?? await exportSnapshot();
+    const snapshotToRestore = localSnapshot ?? (await exportSnapshot());
 
     isRestoringLocalSnapshot = true;
     try {

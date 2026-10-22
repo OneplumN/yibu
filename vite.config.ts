@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -12,7 +13,10 @@ type AiProxyPayload = {
   modelsEndpoint?: string;
 };
 
-const LOCAL_SNAPSHOT_PATH = path.resolve(".local-data/app-snapshot.json");
+const LOCAL_SNAPSHOT_PATH = path.resolve(
+  process.env.YIBU_LOCAL_SNAPSHOT_PATH ?? ".local-data/app-snapshot.json",
+);
+let snapshotWriteTail = Promise.resolve();
 
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.statusCode = status;
@@ -39,7 +43,10 @@ function readRequestJson(request: IncomingMessage) {
   });
 }
 
-function normalizeProxyEndpoint(endpoint: string, suffix: "chat/completions" | "models") {
+function normalizeProxyEndpoint(
+  endpoint: string,
+  suffix: "chat/completions" | "models",
+) {
   const trimmedEndpoint = endpoint.trim().replace(/\/+$/, "");
 
   if (trimmedEndpoint.endsWith(`/${suffix}`)) {
@@ -53,7 +60,10 @@ function normalizeProxyEndpoint(endpoint: string, suffix: "chat/completions" | "
   return `${trimmedEndpoint}/${suffix}`;
 }
 
-function getProxyTargetEndpoint(payload: AiProxyPayload, suffix: "chat/completions" | "models") {
+function getProxyTargetEndpoint(
+  payload: AiProxyPayload,
+  suffix: "chat/completions" | "models",
+) {
   if (suffix === "chat/completions" && payload.chatEndpoint?.trim()) {
     return payload.chatEndpoint.trim().replace(/\/+$/, "");
   }
@@ -79,16 +89,25 @@ async function proxyAiRequest(
       return;
     }
 
-    const upstreamResponse = await fetch(getProxyTargetEndpoint(payload, suffix), {
-      body: suffix === "chat/completions" ? JSON.stringify(payload.body ?? {}) : undefined,
-      headers: {
-        ...(suffix === "chat/completions" ? { "Content-Type": "application/json" } : {}),
-        ...(payload.apiKey?.trim()
-          ? { Authorization: `Bearer ${payload.apiKey.trim()}` }
-          : {}),
+    const upstreamResponse = await fetch(
+      getProxyTargetEndpoint(payload, suffix),
+      {
+        body:
+          suffix === "chat/completions"
+            ? JSON.stringify(payload.body ?? {})
+            : undefined,
+        headers: {
+          ...(suffix === "chat/completions"
+            ? { "Content-Type": "application/json" }
+            : {}),
+          ...(payload.apiKey?.trim()
+            ? { Authorization: `Bearer ${payload.apiKey.trim()}` }
+            : {}),
+        },
+        method: suffix === "chat/completions" ? "POST" : "GET",
+        signal: AbortSignal.timeout(120_000),
       },
-      method: suffix === "chat/completions" ? "POST" : "GET",
-    });
+    );
     const text = await upstreamResponse.text();
 
     response.statusCode = upstreamResponse.status;
@@ -99,7 +118,8 @@ async function proxyAiRequest(
     response.end(text);
   } catch (error) {
     sendJson(response, 502, {
-      error: error instanceof Error ? error.message : "AI proxy request failed.",
+      error:
+        error instanceof Error ? error.message : "AI proxy request failed.",
     });
   }
 }
@@ -120,7 +140,10 @@ async function handleLocalSnapshotRequest(
         return;
       }
       sendJson(response, 500, {
-        error: error instanceof Error ? error.message : "Local snapshot read failed.",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Local snapshot read failed.",
       });
     }
     return;
@@ -129,12 +152,28 @@ async function handleLocalSnapshotRequest(
   if (request.method === "PUT") {
     try {
       const snapshot = await readRequestJson(request);
-      await mkdir(path.dirname(LOCAL_SNAPSHOT_PATH), { recursive: true });
-      await writeFile(LOCAL_SNAPSHOT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+      const write = snapshotWriteTail.then(async () => {
+        await mkdir(path.dirname(LOCAL_SNAPSHOT_PATH), { recursive: true });
+        const temporary = `${LOCAL_SNAPSHOT_PATH}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          await rename(temporary, LOCAL_SNAPSHOT_PATH);
+        } finally {
+          await rm(temporary, { force: true });
+        }
+      });
+      snapshotWriteTail = write.catch(() => {});
+      await write;
       sendJson(response, 200, { ok: true });
     } catch (error) {
       sendJson(response, 500, {
-        error: error instanceof Error ? error.message : "Local snapshot write failed.",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Local snapshot write failed.",
       });
     }
     return;
@@ -154,7 +193,10 @@ export default defineConfig({
             return;
           }
 
-          if (request.method === "POST" && request.url === "/api/ai/chat-completions") {
+          if (
+            request.method === "POST" &&
+            request.url === "/api/ai/chat-completions"
+          ) {
             void proxyAiRequest(request, response, "chat/completions");
             return;
           }

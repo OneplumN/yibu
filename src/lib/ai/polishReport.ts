@@ -11,6 +11,7 @@ function asBulletList(items: string[]) {
 }
 
 export type ReportGenerationOptions = {
+  signal?: AbortSignal;
   apiKey?: string;
   endpoint?: string;
   extraBodyJson?: string;
@@ -85,6 +86,7 @@ async function requestPolishedReport(
   }
 
   return requestChatCompletion({
+    signal: generation.signal,
     apiKey: generation.apiKey,
     endpoint,
     extraBodyJson: generation.extraBodyJson,
@@ -110,7 +112,9 @@ export async function polishReport(
   type: ReportType,
   generation?: ReportGenerationOptions,
 ) {
-  const remoteReport = generation ? await requestPolishedReport(draft, type, generation) : null;
+  const remoteReport = generation
+    ? await requestPolishedReport(draft, type, generation)
+    : null;
 
   return remoteReport ?? buildTemplateReport(draft, type, generation);
 }

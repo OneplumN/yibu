@@ -37,3 +37,21 @@ jobs:
 
       - name: Build web app
         run: npm run build
+
+  native:
+    name: Desktop SQLite Tests
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prepare desktop assets
+        run: npm ci && npm run build
+      - name: Test native database transactions
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib

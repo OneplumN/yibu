@@ -41,6 +41,9 @@ jobs:
       - name: Build Tauri app
         run: npm run tauri:build
 
+      - name: Test native database transactions
+        run: CARGO_TARGET_DIR=/tmp/yibu-tauri-target cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+
       - name: Rename DMG artifact
         run: |
           VERSION="${GITHUB_REF_NAME#v}"

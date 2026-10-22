@@ -1,4 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
+import { StorageConflictError } from "./writeQueue";
 import { DEFAULT_PREFERENCES } from "../constants";
 import {
   sortByCreatedAtDesc,
@@ -49,58 +51,9 @@ function getCompletedAt(task: Task) {
   return task.completionWrapUp?.completedAt ?? null;
 }
 
-function buildInsertStatement(tableName: string, columnNames: string[], rowCount: number) {
-  const rowPlaceholders = Array.from({ length: rowCount }, (_, rowIndex) => {
-    const placeholders = columnNames.map((_, columnIndex) => {
-      return `$${rowIndex * columnNames.length + columnIndex + 1}`;
-    });
-    return `(${placeholders.join(", ")})`;
-  });
-
-  return `INSERT OR REPLACE INTO ${tableName} (${columnNames.join(", ")}) VALUES ${rowPlaceholders.join(", ")}`;
-}
-
-async function insertRows(
-  tableName: string,
-  columnNames: string[],
-  rows: unknown[][],
-) {
-  if (rows.length === 0) {
-    return;
-  }
-
-  const db = await getSqliteDatabase();
-  const chunkSize = Math.max(1, Math.floor(900 / columnNames.length));
-
-  for (let index = 0; index < rows.length; index += chunkSize) {
-    const chunk = rows.slice(index, index + chunkSize);
-    await db.execute(
-      buildInsertStatement(tableName, columnNames, chunk.length),
-      chunk.flat(),
-    );
-  }
-}
-
-async function insertFocusRefs(references: FocusReference[]) {
-  await insertRows(
-    "focus_refs",
-    ["task_id", "added_at", "order_value", "payload_json"],
-    references.map((reference) => [
-      reference.taskId,
-      reference.addedAt,
-      reference.order ?? null,
-      serializePayload(reference),
-    ]),
-  );
-}
-
 async function clearAll() {
-  const db = await getSqliteDatabase();
-  await db.execute("DELETE FROM focus_refs");
-  await db.execute("DELETE FROM reports");
-  await db.execute("DELETE FROM tasks");
-  await db.execute("DELETE FROM projects");
-  await db.execute("DELETE FROM preferences");
+  await getSqliteDatabase();
+  await invoke("sqlite_atomic_write", { write: { kind: "clear" } });
 }
 
 async function ensureReady() {
@@ -108,13 +61,28 @@ async function ensureReady() {
 }
 
 export const sqliteStorageAdapter: StorageAdapter = {
+  async readSnapshot() {
+    await ensureReady();
+    return invoke("sqlite_read_snapshot");
+  },
+  async replaceSnapshot(snapshot) {
+    await ensureReady();
+    await invoke("sqlite_atomic_write", {
+      write: { kind: "snapshot", snapshot },
+    });
+  },
   focusRefs: {
     async add(reference) {
       await ensureReady();
       const db = await getSqliteDatabase();
       await db.execute(
         "INSERT OR REPLACE INTO focus_refs (task_id, added_at, order_value, payload_json) VALUES ($1, $2, $3, $4)",
-        [reference.taskId, reference.addedAt, reference.order ?? null, serializePayload(reference)],
+        [
+          reference.taskId,
+          reference.addedAt,
+          reference.order ?? null,
+          serializePayload(reference),
+        ],
       );
       return reference;
     },
@@ -136,20 +104,22 @@ export const sqliteStorageAdapter: StorageAdapter = {
       const db = await getSqliteDatabase();
       await db.execute("DELETE FROM focus_refs WHERE task_id = $1", [taskId]);
     },
-    async replaceAll(references) {
+    async replaceAll(references, expected) {
       await ensureReady();
-      const db = await getSqliteDatabase();
-      await db.execute("DELETE FROM focus_refs");
-      await insertFocusRefs(references);
+      const saved = await invoke<boolean>("sqlite_atomic_write", {
+        write: { kind: "focus", references, expected },
+      });
+      if (!saved) throw new StorageConflictError();
       return references;
     },
   },
   preferences: {
     async load() {
       await ensureReady();
-      return selectPayload<Preferences>("SELECT payload_json FROM preferences WHERE id = $1", [
-        DEFAULT_PREFERENCES.id,
-      ]);
+      return selectPayload<Preferences>(
+        "SELECT payload_json FROM preferences WHERE id = $1",
+        [DEFAULT_PREFERENCES.id],
+      );
     },
     async save(preferences) {
       await ensureReady();
@@ -162,19 +132,31 @@ export const sqliteStorageAdapter: StorageAdapter = {
     },
   },
   projects: {
+    async saveIfUnchanged(projects, expected) {
+      await ensureReady();
+      return invoke<boolean>("sqlite_atomic_write", {
+        write: { kind: "projects", projects, expected },
+      });
+    },
     async delete(projectId) {
       await ensureReady();
-      const db = await getSqliteDatabase();
-      await db.execute("DELETE FROM projects WHERE id = $1", [projectId]);
+      await invoke("sqlite_atomic_write", {
+        write: { kind: "delete_project", project_id: projectId },
+      });
     },
     async get(projectId) {
       await ensureReady();
-      return selectPayload<Project>("SELECT payload_json FROM projects WHERE id = $1", [projectId]);
+      return selectPayload<Project>(
+        "SELECT payload_json FROM projects WHERE id = $1",
+        [projectId],
+      );
     },
     async list() {
       await ensureReady();
       return sortProjects(
-        await selectPayloads<Project>("SELECT payload_json FROM projects ORDER BY updated_at DESC"),
+        await selectPayloads<Project>(
+          "SELECT payload_json FROM projects ORDER BY updated_at DESC",
+        ),
       );
     },
     async save(project) {
@@ -195,9 +177,10 @@ export const sqliteStorageAdapter: StorageAdapter = {
     },
     async get(reportId) {
       await ensureReady();
-      return selectPayload<SavedReport>("SELECT payload_json FROM reports WHERE id = $1", [
-        reportId,
-      ]);
+      return selectPayload<SavedReport>(
+        "SELECT payload_json FROM reports WHERE id = $1",
+        [reportId],
+      );
     },
     async list() {
       await ensureReady();
@@ -221,6 +204,23 @@ export const sqliteStorageAdapter: StorageAdapter = {
     await clearAll();
   },
   tasks: {
+    async saveIfUnchanged(task, expected) {
+      await ensureReady();
+      const db = await getSqliteDatabase();
+      const result = await db.execute(
+        "UPDATE tasks SET project_id=$1,status=$2,updated_at=$3,completed_at=$4,payload_json=$5 WHERE id=$6 AND payload_json=$7",
+        [
+          task.projectId,
+          task.status,
+          task.updatedAt,
+          getCompletedAt(task),
+          serializePayload(task),
+          task.id,
+          serializePayload(expected),
+        ],
+      );
+      return result.rowsAffected === 1;
+    },
     async delete(taskId) {
       await ensureReady();
       const db = await getSqliteDatabase();
@@ -228,17 +228,24 @@ export const sqliteStorageAdapter: StorageAdapter = {
     },
     async get(taskId) {
       await ensureReady();
-      return selectPayload<Task>("SELECT payload_json FROM tasks WHERE id = $1", [taskId]);
+      return selectPayload<Task>(
+        "SELECT payload_json FROM tasks WHERE id = $1",
+        [taskId],
+      );
     },
     async listAll() {
       await ensureReady();
       return sortByUpdatedAtDesc(
-        await selectPayloads<Task>("SELECT payload_json FROM tasks ORDER BY updated_at DESC"),
+        await selectPayloads<Task>(
+          "SELECT payload_json FROM tasks ORDER BY updated_at DESC",
+        ),
       );
     },
     async listByIds(taskIds) {
       await ensureReady();
-      const records = await Promise.all(taskIds.map((taskId) => this.get(taskId)));
+      const records = await Promise.all(
+        taskIds.map((taskId) => this.get(taskId)),
+      );
       return records.filter((task): task is Task => Boolean(task));
     },
     async listByProject(projectId) {
